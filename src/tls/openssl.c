@@ -493,14 +493,14 @@ static int tls_session_destroy(void *session)
 {
     struct tls_session *ptr = session;
     struct tls_context *ctx;
-
     if (!ptr) {
         return 0;
     }
     ctx = ptr->parent;
-
+    flb_error("[tls] Destroying session");
     pthread_mutex_lock(&ctx->mutex);
-
+    flb_error("[tls] ptr->fd is NULL: %d", ptr->fd == NULL);
+    flb_error("[tls] ptr->ssl is NULL: %d", ptr->ssl == NULL);
     if (flb_socket_error(ptr->fd) == 0) {
         SSL_shutdown(ptr->ssl);
     }
@@ -641,6 +641,7 @@ static int tls_net_handshake(struct flb_tls *tls,
                              void *ptr_session)
 {
     int ret = 0;
+    unsigned long err_r = 0;
     char err_buf[256];
     struct tls_session *session = ptr_session;
     struct tls_context *ctx;
@@ -680,20 +681,33 @@ static int tls_net_handshake(struct flb_tls *tls,
 
     if (ret != 1) {
         ret = SSL_get_error(session->ssl, ret);
+    
+
         if (ret != SSL_ERROR_WANT_READ &&
             ret != SSL_ERROR_WANT_WRITE) {
-            ret = SSL_get_error(session->ssl, ret);
+            err_r = ERR_get_error();
             // The SSL_ERROR_SYSCALL with errno value of 0 indicates unexpected
             //  EOF from the peer. This is fixed in OpenSSL 3.0.
-            if (ret == 0) {
-            	flb_error("[tls] error: unexpected EOF");
+            /* print all relevant variables here for development to see the real case */
+            flb_error("[tls] handshake error: %d, %d, %d, %d, %d, %d", ret, SSL_ERROR_WANT_READ, SSL_ERROR_WANT_WRITE, SSL_ERROR_SYSCALL, errno, err_r);
+            if (ret == SSL_ERROR_ZERO_RETURN ||
+                (ret == SSL_ERROR_SYSCALL && errno == 0 && err_r == 0)) {
+                flb_trace("[tls] Graceful shutdown detected.");
+            } else if (ret == SSL_ERROR_SYSCALL && errno == 0) {
+                flb_debug("[tls] Unexpected EOF. Possibly no close_notify alert.");
+            } else if (err_r) {
+                char err_buf[256]; //Needs to be moved
+                ERR_error_string_n(err_r, err_buf, sizeof(err_buf) - 1);
+                flb_error("[tls] SSL error: %s", err_buf);
             } else {
-                ERR_error_string_n(ret, err_buf, sizeof(err_buf)-1);
-                flb_error("[tls] error: %s", err_buf);
+                flb_error("[tls] Unhandled SSL error");
             }
-
             pthread_mutex_unlock(&ctx->mutex);
-
+            if (session) {
+                //Debug output here
+                flb_error("[tls] session is not NULL. Destroying session.");
+                tls_session_destroy(session);
+            }
             return -1;
         }
 

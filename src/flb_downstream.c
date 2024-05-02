@@ -278,23 +278,44 @@ struct flb_connection *flb_downstream_conn_get(struct flb_downstream *stream)
         connection_fd = FLB_INVALID_SOCKET;
     }
 
+    flb_debug("[downstream] get connection %s:%i",
+              stream->host, stream->port);
+    flb_debug("[downstream] transport=%i, connection_fd=%i",
+              transport, connection_fd);
+    flb_debug("[downstream] busy_queue=%i, destroy_queue=%i",
+              mk_list_size(&stream->busy_queue),
+              mk_list_size(&stream->destroy_queue));
+    flb_debug("[downstream] stream=%p, server_fd=%i",
+              stream, stream->server_fd);
+    flb_debug("[downstream] stream->base=%p, transport=%i",
+              &stream->base, stream->base.transport);
+    flb_debug("[downstream] stream->base=%p, flags=%i",
+              &stream->base, stream->base.flags);
+
     if (flb_downstream_is_async(stream)) {
         coroutine = flb_coro_get();
     }
     else {
         coroutine = NULL;
     }
-
+    flb_debug("[downstream] connection_fd=%i, FLB_DOWNSTREAM_CONNECTION=%i, stream=%p, flb_engine_evl_get()=%p, coroutine=%p",
+              connection_fd, FLB_DOWNSTREAM_CONNECTION, stream, flb_engine_evl_get(), coroutine);
+    
     connection = flb_connection_create(connection_fd,
                                        FLB_DOWNSTREAM_CONNECTION,
                                        (void *) stream,
                                        flb_engine_evl_get(),
                                        coroutine);
+    
 
     if (connection == NULL) {
         return NULL;
     }
 
+    flb_debug("[downstream] connection=%p", connection);
+    flb_debug("[downstream] connection->fd=%i", connection->fd);
+    flb_debug("[downstream] connection->event.fd=%i", connection->event.fd);
+    
     connection->busy_flag = FLB_TRUE;
 
     flb_stream_acquire_lock(&stream->base, FLB_TRUE);

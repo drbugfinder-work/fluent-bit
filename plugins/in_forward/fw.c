@@ -130,10 +130,16 @@ static int in_fw_collect(struct flb_input_instance *ins,
 
     ctx = in_context;
 
+    if (ctx->downstream == NULL) {
+        flb_plg_debug(ctx->ins, "ctx->downstream is not initialized");
+    return -1;
+}
     connection = flb_downstream_conn_get(ctx->downstream);
 
     if (connection == NULL) {
-        flb_plg_error(ctx->ins, "could not accept new connection");
+        flb_plg_debug(ctx->ins, "could not accept new connection. This "
+                                "potentially means the connection was closed "
+                                "unexpectedly without close_notify alert");
 
         return -1;
     }
