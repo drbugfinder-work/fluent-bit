@@ -27,11 +27,16 @@
 #include <fluent-bit/flb_mp.h>
 #include <fluent-bit/flb_mp_chunk.h>
 
+
+#include <unistd.h>
+
 #define flb_plg_log(ctx, level, fmt, ...)                                \
-    if (flb_log_check_level(ctx->log_level, level))                      \
-        flb_log_print(level, NULL, 0, "[processor:%s:%s] " fmt,          \
-                      ctx->p->name,                                      \
-                      flb_processor_instance_get_name(ctx), ##__VA_ARGS__)
+    if (flb_log_check_level(ctx->log_level, level)) {                    \
+        pid_t pid = getpid();                                            \
+        flb_log_print(level, NULL, 0, "[processor:%s:%s pid: %d] " fmt,  \
+                      ctx->p->name, pid                                  \
+                      flb_processor_instance_get_name(ctx), ##__VA_ARGS__);\
+    }
 
 #define flb_plg_error(ctx, fmt, ...) \
     flb_plg_log(ctx, FLB_LOG_ERROR, fmt, ##__VA_ARGS__)
