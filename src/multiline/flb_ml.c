@@ -23,6 +23,7 @@
 #include <fluent-bit/flb_regex.h>
 #include <fluent-bit/flb_time.h>
 #include <fluent-bit/flb_pack.h>
+#include <fluent-bit/flb_pthread.h>
 #include <fluent-bit/flb_scheduler.h>
 #include <fluent-bit/multiline/flb_ml.h>
 #include <fluent-bit/multiline/flb_ml_rule.h>
@@ -110,12 +111,15 @@ void flb_ml_flush_parser_instance(struct flb_ml *ml,
         if (stream_id != 0 && mst->id != stream_id) {
             continue;
         }
-
         /* Iterate stream groups */
+        pthread_mutex_lock(&mst->pth_mutex);
         mk_list_foreach(head_group, &mst->groups) {
             group = mk_list_entry(head_group, struct flb_ml_stream_group, _head);
+            pthread_mutex_lock(&group->pth_mutex);
             flb_ml_flush_stream_group(parser_i->ml_parser, mst, group, forced_flush);
+            pthread_mutex_unlock(&group->pth_mutex);
         }
+        pthread_mutex_unlock(&mst->pth_mutex);
     }
 }
 
@@ -255,9 +259,11 @@ static int package_content(struct flb_ml_stream *mst,
 
     }
     if (type == FLB_ML_REGEX) {
+        pthread_mutex_lock(&stream_group->pth_mutex);
         ret = flb_ml_rule_process(parser, mst,
                                   stream_group, full_map, buf, size, tm,
                                   val_content, val_pattern);
+        pthread_mutex_unlock(&stream_group->pth_mutex);
         if (ret == -1) {
             processed = FLB_FALSE;
         }
@@ -277,11 +283,9 @@ static int package_content(struct flb_ml_stream *mst,
             else {
                 rule_match = match_negate(parser, FLB_FALSE);
             }
-
             if (stream_group->mp_sbuf.size == 0) {
                 flb_ml_register_context(stream_group, tm, full_map);
             }
-
             /* Prepare concatenation */
             breakline_prepare(parser_i, stream_group);
 
@@ -297,7 +301,9 @@ static int package_content(struct flb_ml_stream *mst,
 
             /* on ENDSWITH mode, a rule match means flush the content */
             if (rule_match) {
+                pthread_mutex_lock(&stream_group->pth_mutex);
                 flb_ml_flush_stream_group(parser, mst, stream_group, FLB_FALSE);
+                pthread_mutex_unlock(&stream_group->pth_mutex);
             }
             processed = FLB_TRUE;
         }
@@ -311,9 +317,10 @@ static int package_content(struct flb_ml_stream *mst,
         else {
             rule_match = match_negate(parser, FLB_FALSE);
         }
-
         if (stream_group->mp_sbuf.size == 0) {
+            pthread_mutex_lock(&stream_group->pth_mutex);
             flb_ml_register_context(stream_group, tm, full_map);
+            pthread_mutex_unlock(&stream_group->pth_mutex);
         }
 
         /* Prepare concatenation */
@@ -331,13 +338,17 @@ static int package_content(struct flb_ml_stream *mst,
 
         /* on ENDSWITH mode, a rule match means flush the content */
         if (rule_match) {
+            pthread_mutex_lock(&stream_group->pth_mutex);
             flb_ml_flush_stream_group(parser, mst, stream_group, FLB_FALSE);
+            pthread_mutex_unlock(&stream_group->pth_mutex);
         }
         processed = FLB_TRUE;
     }
 
     if (processed && metadata != NULL) {
+        pthread_mutex_lock(&stream_group->pth_mutex);
         msgpack_pack_object(&stream_group->mp_md_pck, *metadata);
+        pthread_mutex_unlock(&stream_group->pth_mutex);
     }
 
     return processed;
@@ -409,7 +420,9 @@ static int process_append(struct flb_ml_parser_ins *parser_i,
 
     /* Lookup the key */
     if (type == FLB_ML_TYPE_TEXT) {
+        pthread_mutex_lock(&mst->pth_mutex);
         ret = package_content(mst, NULL, NULL, buf, size, tm, NULL, NULL, NULL);
+        pthread_mutex_unlock(&mst->pth_mutex);
         if (ret == FLB_FALSE) {
             return -1;
         }
@@ -475,8 +488,10 @@ static int process_append(struct flb_ml_parser_ins *parser_i,
     }
 
     /* Package the content */
+    pthread_mutex_lock(&mst->pth_mutex);
     ret = package_content(mst, metadata, full_map, buf, size, tm,
                           val_content, val_pattern, val_group);
+    pthread_mutex_unlock(&mst->pth_mutex);
     if (unpacked) {
         msgpack_unpacked_destroy(&result);
     }
@@ -737,11 +752,12 @@ int flb_ml_append_text(struct flb_ml *ml, uint64_t stream_id,
                        "append content to multiline context", stream_id);
             return -1;
         }
-
         /* Get stream group */
         st_group = flb_ml_stream_group_get(mst->parser, mst, NULL);
+        pthread_mutex_lock(&st_group->pth_mutex);
         flb_sds_cat_safe(&st_group->buf, buf, size);
         flb_ml_flush_stream_group(parser_i->ml_parser, mst, st_group, FLB_FALSE);
+        pthread_mutex_unlock(&st_group->pth_mutex);
     }
 
     return 0;
@@ -780,13 +796,13 @@ int flb_ml_append_object(struct flb_ml *ml,
                   "map, received type=%i", obj->type);
         return -1;
 
-
+        pthread_mutex_lock(&ml->pth_mutex);
         flb_log_event_decoder_reset(&ml->log_event_decoder, NULL, 0);
 
         ret = flb_event_decoder_decode_object(&ml->log_event_decoder,
                                               &event,
                                               obj);
-
+        pthread_mutex_unlock(&ml->pth_mutex);
         if (ret != FLB_EVENT_DECODER_SUCCESS) {
             flb_error("[multiline] invalid event object");
 
@@ -868,63 +884,73 @@ int flb_ml_append_object(struct flb_ml *ml,
                                            struct flb_ml_parser_ins,
                                            _head);
         }
-
         flb_ml_flush_parser_instance(ml, parser_i, stream_id, FLB_FALSE);
         mst = flb_ml_stream_get(parser_i, stream_id);
         if (!mst) {
             flb_error("[multiline] invalid stream_id %" PRIu64 ", could not "
                        "append content to multiline context", stream_id);
-
             return -1;
         }
 
         /* Get stream group */
         st_group = flb_ml_stream_group_get(mst->parser, mst, NULL);
-
+        pthread_mutex_lock(&st_group->pth_mutex);
+        pthread_mutex_lock(&ml->pth_mutex);
         ret = flb_log_event_encoder_begin_record(&ml->log_event_encoder);
-
+        pthread_mutex_unlock(&ml->pth_mutex);
         if (ret == FLB_EVENT_ENCODER_SUCCESS) {
+            pthread_mutex_lock(&ml->pth_mutex);
             ret = flb_log_event_encoder_set_timestamp(
                     &ml->log_event_encoder, tm);
+            pthread_mutex_unlock(&ml->pth_mutex);
         }
 
         if (ret == FLB_EVENT_ENCODER_SUCCESS) {
             if (metadata != ml->log_event_decoder.empty_map) {
+                pthread_mutex_lock(&ml->pth_mutex);
                 ret = flb_log_event_encoder_set_metadata_from_msgpack_object(
                         &ml->log_event_encoder, metadata);
+                pthread_mutex_unlock(&ml->pth_mutex);
             }
         }
 
         if (ret == FLB_EVENT_ENCODER_SUCCESS) {
+            pthread_mutex_lock(&ml->pth_mutex);
             ret = flb_log_event_encoder_set_body_from_msgpack_object(
                     &ml->log_event_encoder, obj);
+            pthread_mutex_unlock(&ml->pth_mutex);
         }
 
         if (ret == FLB_EVENT_ENCODER_SUCCESS) {
+            pthread_mutex_lock(&ml->pth_mutex);
             ret = flb_log_event_encoder_commit_record(&ml->log_event_encoder);
+            pthread_mutex_unlock(&ml->pth_mutex);
         }
-
+       
         if (ret == FLB_EVENT_ENCODER_SUCCESS) {
+            pthread_mutex_lock(&mst->pth_mutex);
             mst->cb_flush(parser_i->ml_parser,
                           mst,
                           mst->cb_data,
                           ml->log_event_encoder.output_buffer,
                           ml->log_event_encoder.output_length);
+            pthread_mutex_unlock(&mst->pth_mutex);
         }
+
         else {
             flb_error("[multiline] log event encoder error : %d", ret);
         }
-
+        pthread_mutex_lock(&ml->pth_mutex);
         flb_log_event_encoder_reset(&ml->log_event_encoder);
-
+        pthread_mutex_unlock(&ml->pth_mutex);
         /* reset group buffer counters */
         st_group->mp_sbuf.size = 0;
         flb_sds_len_set(st_group->buf, 0);
 
         /* Update last flush time */
         st_group->last_flush = time_ms_now();
+        pthread_mutex_unlock(&st_group->pth_mutex);
     }
-
     return 0;
 }
 
@@ -981,6 +1007,8 @@ struct flb_ml *flb_ml_create(struct flb_config *ctx, char *name)
 
         return NULL;
     }
+
+    pthread_mutex_init(&ml->pth_mutex, NULL);
 
     return ml;
 }
@@ -1465,7 +1493,6 @@ int flb_ml_flush_stream_group(struct flb_ml_parser *ml_parser,
         msgpack_pack_str(&mp_pck, len);
         msgpack_pack_str_body(&mp_pck, group->buf, len);
     }
-
     if (mp_sbuf.size > 0) {
         /*
          * a 'forced_flush' means to alert the caller that the data 'must be flushed to it destination'. This flag is
@@ -1478,52 +1505,60 @@ int flb_ml_flush_stream_group(struct flb_ml_parser *ml_parser,
         }
 
         /* encode and invoke the user callback */
-
+        pthread_mutex_lock(&mst->ml->pth_mutex);
         ret = flb_log_event_encoder_begin_record(
                 &mst->ml->log_event_encoder);
+        pthread_mutex_unlock(&mst->ml->pth_mutex);
 
         if (ret == FLB_EVENT_ENCODER_SUCCESS) {
+            pthread_mutex_lock(&mst->ml->pth_mutex);
             ret = flb_log_event_encoder_set_timestamp(
                     &mst->ml->log_event_encoder,
                     group_time);
+            pthread_mutex_unlock(&mst->ml->pth_mutex);
         }
-
         if (ret == FLB_EVENT_ENCODER_SUCCESS) {
+            pthread_mutex_lock(&mst->ml->pth_mutex);
             ret = flb_ml_flush_metadata_buffer(mst,
                                                group,
                                                FLB_TRUE);
+            pthread_mutex_unlock(&mst->ml->pth_mutex);
         }
-
         if (ret == FLB_EVENT_ENCODER_SUCCESS) {
+            pthread_mutex_lock(&mst->ml->pth_mutex);
             ret = flb_log_event_encoder_set_body_from_raw_msgpack(
                     &mst->ml->log_event_encoder,
                     mp_sbuf.data,
                     mp_sbuf.size);
+            pthread_mutex_unlock(&mst->ml->pth_mutex);
         }
-
         if (ret == FLB_EVENT_ENCODER_SUCCESS) {
+            pthread_mutex_lock(&mst->ml->pth_mutex);
             ret = flb_log_event_encoder_commit_record(
                     &mst->ml->log_event_encoder);
+            pthread_mutex_unlock(&mst->ml->pth_mutex);
         }
 
         if (ret != FLB_EVENT_ENCODER_SUCCESS) {
             flb_error("[multiline] error packing event");
-
             return -1;
         }
 
         if (ret == FLB_EVENT_ENCODER_SUCCESS) {
+            pthread_mutex_lock(&mst->ml->pth_mutex);
             mst->cb_flush(ml_parser,
                           mst,
                           mst->cb_data,
                           mst->ml->log_event_encoder.output_buffer,
                           mst->ml->log_event_encoder.output_length);
+            pthread_mutex_unlock(&mst->ml->pth_mutex);
         }
         else {
             flb_error("[multiline] log event encoder error : %d", ret);
         }
-
+        pthread_mutex_lock(&mst->ml->pth_mutex);
         flb_log_event_encoder_reset(&mst->ml->log_event_encoder);
+        pthread_mutex_unlock(&mst->ml->pth_mutex);
 
         if (forced_flush) {
             mst->forced_flush = FLB_FALSE;
@@ -1535,7 +1570,6 @@ int flb_ml_flush_stream_group(struct flb_ml_parser *ml_parser,
 
     /* Update last flush time */
     group->last_flush = time_ms_now();
-
     return 0;
 }
 

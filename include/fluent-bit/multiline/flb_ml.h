@@ -28,6 +28,7 @@
 #include <fluent-bit/flb_mp.h>
 #include <fluent-bit/flb_time.h>
 #include <fluent-bit/flb_parser.h>
+#include <fluent-bit/flb_pthread.h>
 #include <fluent-bit/flb_log_event_decoder.h>
 #include <fluent-bit/flb_log_event_encoder.h>
 
@@ -107,6 +108,7 @@ struct flb_ml_stream_group {
     msgpack_packer mp_pck;      /* temporary msgpack packer              */
     struct flb_time mp_time;    /* multiline time parsed from first line */
 
+    pthread_mutex_t pth_mutex;
     struct mk_list _head;
 };
 
@@ -134,6 +136,7 @@ struct flb_ml_stream {
     /* reference to parent instance */
     struct flb_ml_parser_ins *parser;
 
+    pthread_mutex_t pth_mutex;
     struct mk_list _head;
 };
 
@@ -275,6 +278,7 @@ struct flb_ml {
     struct flb_log_event_encoder log_event_encoder;
     struct flb_log_event_decoder log_event_decoder;
     struct flb_config *config;             /* Fluent Bit context */
+    pthread_mutex_t pth_mutex;
 };
 
 struct flb_ml *flb_ml_create(struct flb_config *ctx, char *name);

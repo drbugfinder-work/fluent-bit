@@ -320,8 +320,9 @@ static int cb_emitter_init(struct flb_input_instance *in,
         scheduler != NULL &&
         ctx->ring_buffer_size == 0) {
 
-        ctx->ring_buffer_size = DEFAULT_EMITTER_RING_BUFFER_FLUSH_FREQUENCY;
-
+        //ctx->ring_buffer_size = DEFAULT_EMITTER_RING_BUFFER_FLUSH_FREQUENCY;
+        /* Set to default 20MB */
+        ctx->ring_buffer_size = 20 * 1024 * 1024;
         flb_plg_debug(in,
                       "threaded emitter instances require ring_buffer_size"
                       " being set, using default value of %u",

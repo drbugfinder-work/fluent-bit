@@ -63,6 +63,7 @@ static struct flb_ml_stream_group *stream_group_create(struct flb_ml_stream *mst
     /* status */
     group->first_line = FLB_TRUE;
 
+    pthread_mutex_init(&group->pth_mutex, NULL);
     /* multiline buffer */
     group->buf = flb_sds_create_size(FLB_ML_BUF_SIZE);
     if (!group->buf) {
@@ -196,6 +197,7 @@ static struct flb_ml_stream *stream_create(struct flb_ml *ml,
     stream->ml = ml;
     stream->id = id;
     stream->parser = parser;
+    pthread_mutex_init(&stream->pth_mutex, NULL);
 
     /* Flush Callback and opaque data type */
     if (cb_flush) {
