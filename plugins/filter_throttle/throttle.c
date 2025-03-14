@@ -91,6 +91,16 @@ void *time_ticker(void *args)
                          ctx->window_size,
                          ctx->hash->total / ctx->hash->size);
         }
+        ctx->interval_counter++;
+        if(ctx->interval_counter >= ctx->print_interval) {
+            ctx->interval_counter = 0;
+            if (ctx->print_if_throttle && ctx->dropped_records > 0) {
+                flb_plg_info(ctx->ins, "%d of %d records dropped due to throttling "
+                    "within last print interval", ctx->dropped_records, ctx->total_records);
+                ctx->dropped_records = 0;
+                ctx->total_records = 0;
+            }
+        }
         pthread_mutex_unlock(&throttle_mut);
         /* sleep is a cancelable function */
         sleep(ctx->ticker_data.seconds);
@@ -124,6 +134,19 @@ static int configure(struct flb_filter_throttle_ctx *ctx, struct flb_filter_inst
     if (ctx->window_size <= 1) {
         ctx->window_size = strtoul(THROTTLE_DEFAULT_WINDOW, NULL, 10);
     }
+
+    if (ctx->print_interval <=1) {
+        ctx->print_interval = strtoul(THROTTLE_DEFAULT_PRINT_INTERVAL, NULL, 10);
+    }
+
+    if (ctx->print_if_throttle) {
+        flb_plg_info(f_ins, "Throttle print interval set to %d", ctx->print_interval);
+    }
+
+
+    ctx->interval_counter = 0;
+    ctx->dropped_records = 0;
+    ctx->total_records = 0;
 
     return 0;
 }
@@ -250,6 +273,10 @@ static int cb_throttle_filter(const void *data, size_t bytes,
         }
     }
 
+    struct flb_filter_throttle_ctx *ctx = (struct flb_filter_throttle_ctx *)context;
+    ctx->dropped_records += old_size - new_size;
+    ctx->total_records += old_size;
+
     /* we keep everything ? */
     if (old_size == new_size) {
         /* Destroy the buffer to avoid more overhead */
@@ -316,6 +343,16 @@ static struct flb_config_map config_map[] = {
      FLB_CONFIG_MAP_BOOL, "print_status", THROTTLE_DEFAULT_STATUS,
      0, FLB_TRUE, offsetof(struct flb_filter_throttle_ctx, print_status),
      "Set whether or not to print status information"
+    },
+    {
+     FLB_CONFIG_MAP_BOOL, "print_dropped", false,
+     0, FLB_TRUE, offsetof(struct flb_filter_throttle_ctx, print_if_throttle),
+     "Set whether or not message should be printed if throttled"
+    },
+    {
+     FLB_CONFIG_MAP_INT, "print_dropped_window", THROTTLE_DEFAULT_PRINT_INTERVAL,
+     0, FLB_TRUE, offsetof(struct flb_filter_throttle_ctx, print_interval),
+     "Define interval raster for printing dropped messages"
     },
     {
      FLB_CONFIG_MAP_STR, "interval", THROTTLE_DEFAULT_INTERVAL,

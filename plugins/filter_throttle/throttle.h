@@ -33,6 +33,7 @@
 #define THROTTLE_DEFAULT_WINDOW  "5"
 #define THROTTLE_DEFAULT_INTERVAL  "1"
 #define THROTTLE_DEFAULT_STATUS "false"
+#define THROTTLE_DEFAULT_PRINT_INTERVAL "1"
 
 struct ticker {
     pthread_t thr;
@@ -44,6 +45,11 @@ struct flb_filter_throttle_ctx {
     unsigned int    window_size;
     const char  *slide_interval;
     int print_status;
+    int print_if_throttle;
+    unsigned int print_interval;
+    int dropped_records;
+    int total_records;
+    int interval_counter;
 
     /* internal */
     struct throttle_window *hash;
