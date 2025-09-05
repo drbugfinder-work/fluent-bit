@@ -1406,8 +1406,10 @@ int flb_input_instance_init(struct flb_input_instance *ins,
                           ins->name);
             }
 
-            ins->notification_channel = config->notification_channels[1];
-            ins->processor->notification_channel = ins->notification_channel;
+            if (!flb_input_is_threaded(ins)) {
+               ins->notification_channel = config->notification_channels[1];
+               ins->processor->notification_channel = ins->notification_channel;
+            }
 
             ret = p->cb_init(ins, config, ins->data);
             if (ret != 0) {

@@ -90,7 +90,8 @@ static inline void flb_event_load_injected_events(struct flb_bucket_queue *bktq,
         ++__flb_event_priority_live_foreach_iter,                                       \
         flb_event_load_injected_events(bktq, evl,                                       \
                                       __flb_event_priority_live_foreach_n_events),      \
-        mk_event_wait_2(evl, 0),                                                        \
+        /* mk_event_wait_2(evl, 0), */                                                  \
+        (__flb_event_priority_live_foreach_n_events == 0 ? mk_event_wait_2(evl, 0) : 0),\
         __flb_event_priority_live_foreach_n_events = evl->n_events,                     \
         flb_event_load_bucket_queue(bktq, evl),                                         \
         event = flb_bucket_queue_find_min(bktq) ?                                       \

@@ -332,6 +332,9 @@ static void input_thread(void *data)
 
     flb_engine_evl_set(thi->evl);
 
+    ins->notification_channel = thi->notification_channels[1];
+    ins->processor->notification_channel = ins->notification_channel;
+
     /* Create a scheduler context */
     sched = flb_sched_create(ins->config, thi->evl);
     if (!sched) {
@@ -369,8 +372,6 @@ static void input_thread(void *data)
         input_thread_instance_set_status(ins, FLB_INPUT_THREAD_ERROR);
         return;
     }
-
-    ins->processor->notification_channel = ins->notification_channel;
 
     ret = flb_processor_init(ins->processor);
     if (ret == -1) {
@@ -472,11 +473,8 @@ static void input_thread(void *data)
                 handle_input_thread_event(event->fd, ins->config);
             }
             else if(event->type == FLB_ENGINE_EV_NOTIFICATION) {
-                ret = flb_notification_receive(event->fd, &notification);
-
-                if (ret == 0) {
-                    ret = flb_notification_deliver(notification);
-
+                while ((ret = flb_notification_receive(event->fd, &notification)) == 0) {
+                    (void) flb_notification_deliver(notification);
                     flb_notification_cleanup(notification);
                 }
             }
